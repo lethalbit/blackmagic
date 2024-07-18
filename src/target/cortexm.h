@@ -196,5 +196,6 @@ int cortexm_mem_write_aligned(target_s *target, target_addr_t dest, const void *
 uint32_t cortexm_demcr_read(const target_s *target);
 void cortexm_demcr_write(target_s *target, uint32_t demcr);
 bool target_is_cortexm(const target_s *target);
+void cortexm_mem_read(target_s *target, void *dest, target_addr64_t src, size_t len);
 
 #endif /* TARGET_CORTEXM_H */
