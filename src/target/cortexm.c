@@ -421,7 +421,7 @@ static void cortexm_cache_clean(target_s *target, target_addr_t addr, size_t len
 	}
 }
 
-static void cortexm_mem_read(target_s *target, void *dest, target_addr64_t src, size_t len)
+void cortexm_mem_read(target_s *target, void *dest, target_addr64_t src, size_t len)
 {
 	cortexm_cache_clean(target, src, len, false);
 	adiv5_mem_read(cortex_ap(target), dest, src, len);

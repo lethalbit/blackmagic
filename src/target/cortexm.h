@@ -171,5 +171,6 @@ void cortexm_detach(target_s *target);
 void cortexm_halt_resume(target_s *target, bool step);
 bool cortexm_run_stub(target_s *target, uint32_t loadaddr, uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3);
 int cortexm_mem_write_aligned(target_s *target, target_addr_t dest, const void *src, size_t len, align_e align);
+void cortexm_mem_read(target_s *target, void *dest, target_addr64_t src, size_t len);
 
 #endif /* TARGET_CORTEXM_H */
