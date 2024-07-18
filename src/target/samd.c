@@ -262,6 +262,13 @@
 
 static bool samd_flash_erase(target_flash_s *f, target_addr_t addr, size_t len);
 static bool samd_flash_write(target_flash_s *f, target_addr_t dest, const void *src, size_t len);
+
+static void samd_spi_init(target_s *const target, const target_addr32_t sercom_base);
+static void samd_spi_read(target_s *const target, const uint16_t command, const target_addr_t address,
+	void *const buffer, const size_t length);
+static void samd_spi_write(
+	target_s *target, uint16_t command, target_addr_t address, const void *buffer, size_t length);
+static void samd_spi_run_cmd(target_s *target, uint16_t command, target_addr_t address);
 /* NB: This is not marked static on purpose as it's used by samx5x.c. */
 bool samd_mass_erase(target_s *t, platform_timeout_s *print_progess);
 
@@ -803,9 +810,13 @@ bool samd_probe(target_s *t)
 		t->attach = samd_protected_attach;
 	}
 
-	target_add_ram32(t, 0x20000000, samd.ram_size);
-	samd_add_flash(t, 0x00000000, samd.flash_size);
+	target_add_ram32(t, 0x20000000U, samd.ram_size);
+	samd_add_flash(t, 0x00000000U, samd.flash_size);
+	bmp_spi_add_flash(
+		t, SAMD_SQUISHY_FLASH_BASE, SAMD_SQUISHY_FLASH_SIZE, samd_spi_read, samd_spi_write, samd_spi_run_cmd);
 	target_add_commands(t, samd_cmd_list, "SAMD");
+
+	samd_spi_init(t, SAMD_SERCOM0_BASE);
 
 	/* If we're not in reset here */
 	if (!platform_nrst_get_val()) {
@@ -905,6 +916,143 @@ static bool samd_flash_write(target_flash_s *f, target_addr_t dest, const void *
 	samd_lock_current_address(t);
 
 	return true;
+}
+
+static void samd_pin_setup(
+	target_s *const target, const uint8_t port, const uint8_t pin, const uint8_t cfg, const uint8_t mux)
+{
+	const target_addr32_t port_pinmux_taddr = SAMD_PORTx_PMUX0(port) + (pin >> 1U);
+
+	// Shift depending if we're dealing with an odd pin
+	const size_t pinmux_shift = (pin & 1U) << 2U;
+	// Get only the half of the pin mux config we're interested in preserving
+	uint8_t pin_mux = target_mem32_read8(target, port_pinmux_taddr) & ~(SAMD_PORTx_PMUX_PMUXE_MASK << pinmux_shift);
+	// Set the new mux configuration
+	pin_mux |= (mux & SAMD_PORTx_PMUX_PMUXE_MASK) << pinmux_shift;
+	target_mem32_write8(target, port_pinmux_taddr, pin_mux);
+
+	// Set the pin configuration
+	target_mem32_write8(target, SAMD_PORTx_PINCFG0(port) + pin, cfg);
+}
+
+static void samd_setup_sercom(target_s *const target)
+{
+	// PA4: CS (PAD[2]) (OUT) (FUNC_C)
+	// PA5: CLK (PAD[3]) (OUT) (FUNC_D)
+	// PA6: COPI (PAD[0]) (OUT) (FUNC_C)
+	// PA7: CIPO (PAD[1]) (IN) (FUNC_D)
+
+	samd_pin_setup(target, SAMD_PORT_A, 4U, SAMD_PORTx_PINCFG_DRVSTR, SAMD_PORTx_PMUX_PMUXE_FUNC_C);
+	samd_pin_setup(
+		target, SAMD_PORT_A, 5U, SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN, SAMD_PORTx_PMUX_PMUXE_FUNC_D);
+	samd_pin_setup(
+		target, SAMD_PORT_A, 6U, SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN, SAMD_PORTx_PMUX_PMUXE_FUNC_C);
+	samd_pin_setup(target, SAMD_PORT_A, 7U,
+		SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN | SAMD_PORTx_PINCFG_INEN, SAMD_PORTx_PMUX_PMUXE_FUNC_D);
+
+	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+	target_mem32_write32(target, SAMD_PORTx_DIRSET(SAMD_PORT_A), SAMD_PIN4 | SAMD_PIN5 | SAMD_PIN6);
+	target_mem32_write32(target, SAMD_PORTx_DIRCLR(SAMD_PORT_A), SAMD_PIN7);
+}
+
+static void samd_spi_init(target_s *const target, const target_addr32_t sercom_base)
+{
+	// Check if the SERCOM is enabled, disable if so
+	uint32_t ctrla = target_mem32_read32(target, SAMD_SERCOMx_CTRLA(sercom_base));
+	if (ctrla & SAMD_SERCOMx_CTRLA_ENABLE) {
+		target_mem32_write32(target, SAMD_SERCOMx_CTRLA(sercom_base), ctrla & ~SAMD_SERCOMx_CTRLA_ENABLE);
+		while (target_mem32_read32(target, SAMD_SERCOMx_SYNCBUSY(sercom_base)) & SAMD_SERCOMx_SYNCBUSY_ENABLE)
+			continue;
+	}
+
+	// Setup the SERCOMx pin configuration
+	samd_setup_sercom(target);
+
+	// Set us as an SPI controller
+	ctrla = SAMD_SERCOMx_CTRLA_MODE_CONTROLLER |
+		// Set CPOL to 0 and CPHA to 1, setting SCK idle low, sample on trailing edge
+		SAMD_SERCOMx_CTRLA_CPHA |
+		// Pure data frame format (ignores the addr)
+		SAMD_SERCOMx_CTRLA_FORM_SPI |
+		// Set up the SERCOM Pinout: PAD[0] = COPI; PAD[1] = CLK; PAD[2] = CS; PAD[3] = CIPO
+		SAMD_SERCOMx_CTRLA_DOPO_0 | SAMD_SERCOMx_CTRLA_DIPO_1 |
+		// Set to LSB-first
+		SAMD_SERCOMx_CTRLA_DORD;
+	// Wiggle the bits
+	target_mem32_write32(target, SAMD_SERCOMx_CTRLA(sercom_base), ctrla);
+
+	// Set the character size to 8-bits, enable receve mode
+	target_mem32_write32(
+		target, SAMD_SERCOMx_CTRLB(sercom_base), SAMD_SERCOMx_CTRLB_CHSIZE_8BIT | SAMD_SERCOMx_CTRLB_RXEN);
+
+	// Enable the BAUD generation even though we've brainslugged the core
+	target_mem32_write8(target, SAMD_SERCOMx_DBGCTRL(sercom_base), 0U);
+
+	// Assume 32MHz in 16MHz flash clock
+	// baud = (32MHz / (2 * 16MHz)) - 1 = 0
+	target_mem32_write8(target, SAMD_SERCOMx_BAUD(sercom_base), 0U);
+
+	// Enable the SERCOM and wait for things to go green
+	target_mem32_write32(target, SAMD_SERCOMx_CTRLA(sercom_base), ctrla | SAMD_SERCOMx_CTRLA_ENABLE);
+	while (target_mem32_read32(target, SAMD_SERCOMx_SYNCBUSY(sercom_base)) & SAMD_SERCOMx_SYNCBUSY_ENABLE)
+		continue;
+}
+
+static uint8_t samd_spi_xfer(target_s *const target, const uint8_t data)
+{
+	target_mem32_write8(target, SAMD_SERCOMx_DATA(SAMD_SERCOM0_BASE), data);
+	return target_mem32_read8(target, SAMD_SERCOMx_DATA(SAMD_SERCOM0_BASE));
+}
+
+static void samd_spi_setup_xfer(target_s *const target, const uint16_t command, const target_addr32_t address)
+{
+	target_mem32_write32(target, SAMD_PORTx_OUTCLR(SAMD_PORT_A), SAMD_PIN4);
+
+	/* Set up the instruction */
+	const uint8_t opcode = command & SPI_FLASH_OPCODE_MASK;
+	samd_spi_xfer(target, opcode);
+
+	if ((command & SPI_FLASH_OPCODE_MODE_MASK) == SPI_FLASH_OPCODE_3B_ADDR) {
+		/* For each byte sent here, we have to manually clean up from the controller with a read */
+		samd_spi_xfer(target, (address >> 16U) & 0xffU);
+		samd_spi_xfer(target, (address >> 8U) & 0xffU);
+		samd_spi_xfer(target, address & 0xffU);
+	}
+
+	const size_t inter_length = (command & SPI_FLASH_DUMMY_MASK) >> SPI_FLASH_DUMMY_SHIFT;
+	for (size_t i = 0; i < inter_length; ++i)
+		/* For each byte sent here, we have to manually clean up from the controller with a read */
+		samd_spi_xfer(target, 0);
+}
+
+static void samd_spi_read(target_s *const target, const uint16_t command, const target_addr_t address,
+	void *const buffer, const size_t length)
+{
+	samd_spi_setup_xfer(target, command, address);
+
+	uint8_t *const data = (uint8_t *const)buffer;
+	for (size_t i = 0; i < length; ++i)
+		data[i] = samd_spi_xfer(target, 0);
+
+	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+}
+
+static void samd_spi_write(target_s *const target, const uint16_t command, const target_addr_t address,
+	const void *const buffer, const size_t length)
+{
+	samd_spi_setup_xfer(target, command, address);
+
+	const uint8_t *const data = (const uint8_t *const)buffer;
+	for (size_t i = 0; i < length; ++i)
+		samd_spi_xfer(target, data[i]);
+
+	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+}
+
+static void samd_spi_run_cmd(target_s *const target, const uint16_t command, const target_addr_t address)
+{
+	samd_spi_setup_xfer(target, command, address);
+	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
 }
 
 /* Uses the Device Service Unit to erase the entire flash */
