@@ -42,6 +42,223 @@
 #include "target.h"
 #include "target_internal.h"
 #include "cortexm.h"
+#include "spi.h"
+
+#define SAMD_SQUISHY_FLASH_BASE 0x10000000U
+#define SAMD_SQUISHY_FLASH_SIZE 0x04000000U
+
+#define SAMD_SERCOM0_BASE 0x42000800U
+#define SAMD_SERCOM1_BASE 0x42000C00U
+
+#define SAMD_SERCOMx_CTRLA(base)    (base + 0x000U)
+#define SAMD_SERCOMx_CTRLB(base)    (base + 0x004U)
+#define SAMD_SERCOMx_BAUD(base)     (base + 0x00cU)
+#define SAMD_SERCOMx_INTENCLR(base) (base + 0x014U)
+#define SAMD_SERCOMx_INTENSET(base) (base + 0x016U)
+#define SAMD_SERCOMx_INTFLAG(base)  (base + 0x018U)
+#define SAMD_SERCOMx_STATUS(base)   (base + 0x01aU)
+#define SAMD_SERCOMx_SYNCBUSY(base) (base + 0x01cU)
+#define SAMD_SERCOMx_ADDR(base)     (base + 0x024U)
+#define SAMD_SERCOMx_DATA(base)     (base + 0x028U)
+#define SAMD_SERCOMx_DBGCTRL(base)  (base + 0x030U)
+
+#define SAMD_SERCOMx_CTRLA_SWRST           (1U << 0U)
+#define SAMD_SERCOMx_CTRLA_ENABLE          (1U << 1U)
+#define SAMD_SERCOMx_CTRLA_MODE_MASK       (0x7U << 2U)
+#define SAMD_SERCOMx_CTRLA_MODE_PERIPHERAL (0x2U << 2U)
+#define SAMD_SERCOMx_CTRLA_MODE_CONTROLLER (0x3U << 2U)
+#define SAMD_SERCOMx_CTRLA_RUNSTDBY        (1U << 7U)
+#define SAMD_SERCOMx_CTRLA_IBON            (1U << 8U)
+#define SAMD_SERCOMx_CTRLA_DOPO_MASK       (0x3U << 16U)
+#define SAMD_SERCOMx_CTRLA_DOPO_0          (0x0U << 16U) // PAD[0] = DO, PAD[1] = SCK, PAD[2] = Peripheral_SS
+#define SAMD_SERCOMx_CTRLA_DOPO_1          (0x1U << 16U) // PAD[2] = DO, PAD[3] = SCK, PAD[1] = Peripheral_SS
+#define SAMD_SERCOMx_CTRLA_DOPO_2          (0x2U << 16U) // PAD[3] = DO, PAD[1] = SCK, PAD[2] = Peripheral_SS
+#define SAMD_SERCOMx_CTRLA_DOPO_3          (0x3U << 16U) // PAD[0] = DO, PAD[3] = SCK, PAD[1] = Peripheral_SS
+#define SAMD_SERCOMx_CTRLA_DIPO_MASK       (0x3U << 20U)
+#define SAMD_SERCOMx_CTRLA_DIPO_0          (0x0U << 20U) // PAD[0] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_1          (0x2U << 20U) // PAD[1] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_2          (0x3U << 20U) // PAD[2] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_3          (0x4U << 20U) // PAD[3] = DI
+#define SAMD_SERCOMx_CTRLA_FORM_MASK       (0xfU << 24U)
+#define SAMD_SERCOMx_CTRLA_FORM_SPI        (0x0U << 24U) // SPI Frame
+#define SAMD_SERCOMx_CTRLA_FORM_SPI_ADDR   (0x2U << 24U) // SPI Frame w/ Addr
+#define SAMD_SERCOMx_CTRLA_CPHA            (1U << 28)    // Clock Phase: 0 Leading, 1 Trailing
+#define SAMD_SERCOMx_CTRLA_CPOL            (1U << 29)    // Clock Polarity: 0 Low, 1 High
+#define SAMD_SERCOMx_CTRLA_DORD            (1U << 30)    // Data Order: 0 MSB, 1 LSB
+
+#define SAMD_SERCOMx_CTRLB_CHSIZE_MASK    (0x7U << 0U)
+#define SAMD_SERCOMx_CTRLB_CHSIZE_8BIT    (0x0U << 0U)
+#define SAMD_SERCOMx_CTRLB_CHSIZE_9BIT    (0x1U << 0U)
+#define SAMD_SERCOMx_CTRLB_PLOADEN        (1U << 6U)
+#define SAMD_SERCOMx_CTRLB_SSDE           (1U << 9U)
+#define SAMD_SERCOMx_CTRLB_MSSEN          (1U << 13U)
+#define SAMD_SERCOMx_CTRLB_AMODE_MASK     (0x3U << 14U)
+#define SAMD_SERCOMx_CTRLB_AMODE_ADDRMASK (0x0U << 14U)
+#define SAMD_SERCOMx_CTRLB_AMODE_2ADDRS   (0x1U << 14U)
+#define SAMD_SERCOMx_CTRLB_AMODE_RANGE    (0x2U << 14U)
+#define SAMD_SERCOMx_CTRLB_RXEN           (1U << 17U)
+
+#define SAMD_SERCOMx_INTCLR_DRE   (1U << 0U)
+#define SAMD_SERCOMx_INTCLR_TXC   (1U << 1U)
+#define SAMD_SERCOMx_INTCLR_RXC   (1U << 2U)
+#define SAMD_SERCOMx_INTCLR_SSL   (1U << 3U)
+#define SAMD_SERCOMx_INTCLR_ERROR (1U << 7U)
+
+#define SAMD_SERCOMx_INTSET_DRE   (1U << 0U)
+#define SAMD_SERCOMx_INTSET_TXC   (1U << 1U)
+#define SAMD_SERCOMx_INTSET_RXC   (1U << 2U)
+#define SAMD_SERCOMx_INTSET_SSL   (1U << 3U)
+#define SAMD_SERCOMx_INTSET_ERROR (1U << 7U)
+
+#define SAMD_SERCOMx_INTFLAG_DRE   (1U << 0U)
+#define SAMD_SERCOMx_INTFLAG_TXC   (1U << 1U)
+#define SAMD_SERCOMx_INTFLAG_RXC   (1U << 2U)
+#define SAMD_SERCOMx_INTFLAG_SSL   (1U << 3U)
+#define SAMD_SERCOMx_INTFLAG_ERROR (1U << 7U)
+
+#define SAMD_SERCOMx_STATUS_BUFOVF (1U << 2U)
+
+#define SAMD_SERCOMx_SYNCBUSY_SWRST  (1U << 0U)
+#define SAMD_SERCOMx_SYNCBUSY_ENABLE (1U << 1U)
+#define SAMD_SERCOMx_SYNCBUSY_CTRLB  (1U << 2U)
+
+#define SAMD_SERCOMx_ADDR_ADDR_MASK     (0xfU << 0U)
+#define SAMD_SERCOMx_ADDR_ADDRMASK_MASK (0xfU << 16U)
+
+#define SAMD_SERCOMx_DATA_DATA_MASK (0x10U << 0U)
+
+#define SAMD_SERCOMx_DBGCTRL_DBSTOP (1U << 0U) // 1 Freeze BAUD when DBG, 0 Don't
+
+#define SAMD_PORTx_BASE           0x41004400U
+#define SAMD_PORT_A               0x00U
+#define SAMD_PORT_B               0x80U
+#define SAMD_PORTx_DIR(port)      (SAMD_PORTx_BASE + port + 0x000U)
+#define SAMD_PORTx_DIRCLR(port)   (SAMD_PORTx_BASE + port + 0x004U)
+#define SAMD_PORTx_DIRSET(port)   (SAMD_PORTx_BASE + port + 0x008U)
+#define SAMD_PORTx_DIRTGL(port)   (SAMD_PORTx_BASE + port + 0x00cU)
+#define SAMD_PORTx_OUT(port)      (SAMD_PORTx_BASE + port + 0x010U)
+#define SAMD_PORTx_OUTCLR(port)   (SAMD_PORTx_BASE + port + 0x014U)
+#define SAMD_PORTx_OUTSET(port)   (SAMD_PORTx_BASE + port + 0x018U)
+#define SAMD_PORTx_OUTTGL(port)   (SAMD_PORTx_BASE + port + 0x01cU)
+#define SAMD_PORTx_IN(port)       (SAMD_PORTx_BASE + port + 0x020U)
+#define SAMD_PORTx_CTRL(port)     (SAMD_PORTx_BASE + port + 0x024U)
+#define SAMD_PORTx_WRCONFIG(port) (SAMD_PORTx_BASE + port + 0x028U)
+#define SAMD_PORTx_PMUX0(port)    (SAMD_PORTx_BASE + port + 0x030U)
+#define SAMD_PORTx_PMUX1(port)    (SAMD_PORTx_BASE + port + 0x031U)
+#define SAMD_PORTx_PMUX2(port)    (SAMD_PORTx_BASE + port + 0x032U)
+#define SAMD_PORTx_PMUX3(port)    (SAMD_PORTx_BASE + port + 0x033U)
+#define SAMD_PORTx_PMUX4(port)    (SAMD_PORTx_BASE + port + 0x034U)
+#define SAMD_PORTx_PMUX5(port)    (SAMD_PORTx_BASE + port + 0x035U)
+#define SAMD_PORTx_PMUX6(port)    (SAMD_PORTx_BASE + port + 0x036U)
+#define SAMD_PORTx_PMUX7(port)    (SAMD_PORTx_BASE + port + 0x037U)
+#define SAMD_PORTx_PMUX8(port)    (SAMD_PORTx_BASE + port + 0x038U)
+#define SAMD_PORTx_PMUX9(port)    (SAMD_PORTx_BASE + port + 0x039U)
+#define SAMD_PORTx_PMUX10(port)   (SAMD_PORTx_BASE + port + 0x03aU)
+#define SAMD_PORTx_PMUX11(port)   (SAMD_PORTx_BASE + port + 0x03bU)
+#define SAMD_PORTx_PMUX12(port)   (SAMD_PORTx_BASE + port + 0x03cU)
+#define SAMD_PORTx_PMUX13(port)   (SAMD_PORTx_BASE + port + 0x03dU)
+#define SAMD_PORTx_PMUX14(port)   (SAMD_PORTx_BASE + port + 0x03eU)
+#define SAMD_PORTx_PMUX15(port)   (SAMD_PORTx_BASE + port + 0x03fU)
+#define SAMD_PORTx_PINCFG0(port)  (SAMD_PORTx_BASE + port + 0x040U)
+#define SAMD_PORTx_PINCFG1(port)  (SAMD_PORTx_BASE + port + 0x041U)
+#define SAMD_PORTx_PINCFG2(port)  (SAMD_PORTx_BASE + port + 0x042U)
+#define SAMD_PORTx_PINCFG3(port)  (SAMD_PORTx_BASE + port + 0x043U)
+#define SAMD_PORTx_PINCFG4(port)  (SAMD_PORTx_BASE + port + 0x044U)
+#define SAMD_PORTx_PINCFG5(port)  (SAMD_PORTx_BASE + port + 0x045U)
+#define SAMD_PORTx_PINCFG6(port)  (SAMD_PORTx_BASE + port + 0x046U)
+#define SAMD_PORTx_PINCFG7(port)  (SAMD_PORTx_BASE + port + 0x047U)
+#define SAMD_PORTx_PINCFG8(port)  (SAMD_PORTx_BASE + port + 0x048U)
+#define SAMD_PORTx_PINCFG9(port)  (SAMD_PORTx_BASE + port + 0x049U)
+#define SAMD_PORTx_PINCFG10(port) (SAMD_PORTx_BASE + port + 0x04aU)
+#define SAMD_PORTx_PINCFG11(port) (SAMD_PORTx_BASE + port + 0x04bU)
+#define SAMD_PORTx_PINCFG12(port) (SAMD_PORTx_BASE + port + 0x04cU)
+#define SAMD_PORTx_PINCFG13(port) (SAMD_PORTx_BASE + port + 0x04dU)
+#define SAMD_PORTx_PINCFG14(port) (SAMD_PORTx_BASE + port + 0x04eU)
+#define SAMD_PORTx_PINCFG15(port) (SAMD_PORTx_BASE + port + 0x04fU)
+#define SAMD_PORTx_PINCFG16(port) (SAMD_PORTx_BASE + port + 0x050U)
+#define SAMD_PORTx_PINCFG17(port) (SAMD_PORTx_BASE + port + 0x051U)
+#define SAMD_PORTx_PINCFG18(port) (SAMD_PORTx_BASE + port + 0x052U)
+#define SAMD_PORTx_PINCFG19(port) (SAMD_PORTx_BASE + port + 0x053U)
+#define SAMD_PORTx_PINCFG20(port) (SAMD_PORTx_BASE + port + 0x054U)
+#define SAMD_PORTx_PINCFG21(port) (SAMD_PORTx_BASE + port + 0x055U)
+#define SAMD_PORTx_PINCFG22(port) (SAMD_PORTx_BASE + port + 0x056U)
+#define SAMD_PORTx_PINCFG23(port) (SAMD_PORTx_BASE + port + 0x057U)
+#define SAMD_PORTx_PINCFG24(port) (SAMD_PORTx_BASE + port + 0x058U)
+#define SAMD_PORTx_PINCFG25(port) (SAMD_PORTx_BASE + port + 0x059U)
+#define SAMD_PORTx_PINCFG26(port) (SAMD_PORTx_BASE + port + 0x05aU)
+#define SAMD_PORTx_PINCFG27(port) (SAMD_PORTx_BASE + port + 0x05bU)
+#define SAMD_PORTx_PINCFG28(port) (SAMD_PORTx_BASE + port + 0x05cU)
+#define SAMD_PORTx_PINCFG29(port) (SAMD_PORTx_BASE + port + 0x05dU)
+#define SAMD_PORTx_PINCFG30(port) (SAMD_PORTx_BASE + port + 0x05eU)
+#define SAMD_PORTx_PINCFG31(port) (SAMD_PORTx_BASE + port + 0x05fU)
+
+#define SAMD_PORTx_WRCONFIG_PINMASK_MASK (0xffffU << 0U)
+#define SAMD_PORTx_WRCONFIG_PMUXEN       (1U << 16U)
+#define SAMD_PORTx_WRCONFIG_INEN         (1U << 17U)
+#define SAMD_PORTx_WRCONFIG_PULLEN       (1U << 18U)
+#define SAMD_PORTx_WRCONFIG_DRVSTR       (1U << 22U)
+#define SAMD_PORTx_WRCONFIG_PMUX_MASK    (0xfU << 24U)
+#define SAMD_PORTx_WRCONFIG_WRPMUX       (1U << 28U)
+#define SAMD_PORTx_WRCONFIG_WRPINCFG     (1U << 30U)
+#define SAMD_PORTx_WRCONFIG_HWSEL        (1U << 31U) // 0 Lower 16 Pins, 1 Upper 16 Pins
+
+#define SAMD_PORTx_PMUX_PMUXE_MASK   (0xfU << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_A (0x0U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_B (0x1U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_C (0x2U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_D (0x3U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_E (0x4U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_F (0x5U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_G (0x6U << 0U)
+#define SAMD_PORTx_PMUX_PMUXE_FUNC_H (0x7U << 0U)
+#define SAMD_PORTx_PMUX_PMUXO_MASK   (0xfU << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_A (0x0U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_B (0x1U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_C (0x2U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_D (0x3U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_E (0x4U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_F (0x5U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_G (0x6U << 4U)
+#define SAMD_PORTx_PMUX_PMUXO_FUNC_H (0x7U << 4U)
+
+#define SAMD_PORTx_PINCFG_PMUXEN (1U << 0U)
+#define SAMD_PORTx_PINCFG_INEN   (1U << 1U)
+#define SAMD_PORTx_PINCFG_PULLEN (1U << 2U)
+#define SAMD_PORTx_PINCFG_DRVSTR (1U << 6U)
+
+#define SAMD_PIN(num) (1U << num)
+#define SAMD_PIN0     SAMD_PIN(0U)
+#define SAMD_PIN1     SAMD_PIN(1U)
+#define SAMD_PIN2     SAMD_PIN(2U)
+#define SAMD_PIN3     SAMD_PIN(3U)
+#define SAMD_PIN4     SAMD_PIN(4U)
+#define SAMD_PIN5     SAMD_PIN(5U)
+#define SAMD_PIN6     SAMD_PIN(6U)
+#define SAMD_PIN7     SAMD_PIN(7U)
+#define SAMD_PIN8     SAMD_PIN(8U)
+#define SAMD_PIN9     SAMD_PIN(9U)
+#define SAMD_PIN10    SAMD_PIN(10U)
+#define SAMD_PIN11    SAMD_PIN(11U)
+#define SAMD_PIN12    SAMD_PIN(12U)
+#define SAMD_PIN13    SAMD_PIN(13U)
+#define SAMD_PIN14    SAMD_PIN(14U)
+#define SAMD_PIN15    SAMD_PIN(15U)
+#define SAMD_PIN16    SAMD_PIN(16U)
+#define SAMD_PIN17    SAMD_PIN(17U)
+#define SAMD_PIN18    SAMD_PIN(18U)
+#define SAMD_PIN19    SAMD_PIN(19U)
+#define SAMD_PIN20    SAMD_PIN(20U)
+#define SAMD_PIN21    SAMD_PIN(21U)
+#define SAMD_PIN22    SAMD_PIN(22U)
+#define SAMD_PIN23    SAMD_PIN(23U)
+#define SAMD_PIN24    SAMD_PIN(24U)
+#define SAMD_PIN25    SAMD_PIN(25U)
+#define SAMD_PIN26    SAMD_PIN(26U)
+#define SAMD_PIN27    SAMD_PIN(27U)
+#define SAMD_PIN28    SAMD_PIN(28U)
+#define SAMD_PIN29    SAMD_PIN(29U)
+#define SAMD_PIN30    SAMD_PIN(30U)
+#define SAMD_PIN31    SAMD_PIN(31U)
 
 static bool samd_flash_erase(target_flash_s *f, target_addr_t addr, size_t len);
 static bool samd_flash_write(target_flash_s *f, target_addr_t dest, const void *src, size_t len);
