@@ -272,6 +272,8 @@ static void samd_spi_run_cmd(target_s *target, uint16_t command, target_addr_t a
 /* NB: This is not marked static on purpose as it's used by samx5x.c. */
 bool samd_mass_erase(target_s *t, platform_timeout_s *print_progess);
 
+static void samd_mem_read(target_s *const target, void *const dest, const target_addr64_t src, const size_t len);
+
 static bool samd_cmd_lock_flash(target_s *t, int argc, const char **argv);
 static bool samd_cmd_unlock_flash(target_s *t, int argc, const char **argv);
 static bool samd_cmd_unlock_bootprot(target_s *t, int argc, const char **argv);
@@ -783,6 +785,7 @@ bool samd_probe(target_s *t)
 	t->driver = priv_storage->samd_variant_string;
 	t->reset = samd_reset;
 	t->mass_erase = samd_mass_erase;
+	t->mem_read = samd_mem_read;
 
 	if (samd.series == 20 && samd.revision == 'B') {
 		/*
@@ -1053,6 +1056,15 @@ static void samd_spi_run_cmd(target_s *const target, const uint16_t command, con
 {
 	samd_spi_setup_xfer(target, command, address);
 	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+}
+
+static void samd_mem_read(target_s *const target, void *const dest, const target_addr64_t src, const size_t len)
+{
+	if (src >= SAMD_SQUISHY_FLASH_BASE && src < SAMD_SQUISHY_FLASH_BASE + SAMD_SQUISHY_FLASH_SIZE)
+		samd_spi_read(target, SPI_FLASH_OPCODE_3B_ADDR | SPI_FLASH_DUMMY_LEN(0U) | SPI_FLASH_OPCODE(0x03U),
+			src - SAMD_SQUISHY_FLASH_BASE, dest, len);
+	else
+		cortexm_mem_read(target, dest, src, len);
 }
 
 /* Uses the Device Service Unit to erase the entire flash */
