@@ -45,7 +45,10 @@
 #include "spi.h"
 
 #define SAMD_SQUISHY_FLASH_BASE 0x10000000U
-#define SAMD_SQUISHY_FLASH_SIZE 0x04000000U
+#define SAMD_SQUISHY_FLASH_SIZE 0x04000000U // 64Mib
+
+#define SAMD_SQUISHY_FPGA_BASE 0x18000000U
+#define SAMD_SQUISHY_FPGA_SIZE 0x00200000U // 16Mib
 
 #define SAMD_SERCOM0_BASE 0x42000800U
 #define SAMD_SERCOM1_BASE 0x42000C00U
@@ -259,6 +262,11 @@
 #define SAMD_PIN29    SAMD_PIN(29U)
 #define SAMD_PIN30    SAMD_PIN(30U)
 #define SAMD_PIN31    SAMD_PIN(31U)
+
+static bool samd_bitstream_prep(target_flash_s *flash);
+static bool samd_bitstream_erase(target_flash_s *flash, target_addr_t addr, size_t len);
+static bool samd_bitstream_write(target_flash_s *flash, target_addr_t dest, const void *src, size_t len);
+static bool samd_bitstream_done(target_flash_s *flash);
 
 static bool samd_flash_erase(target_flash_s *f, target_addr_t addr, size_t len);
 static bool samd_flash_write(target_flash_s *f, target_addr_t dest, const void *src, size_t len);
@@ -743,6 +751,25 @@ static void samd_add_flash(target_s *t, uint32_t addr, size_t length)
 	target_add_flash(t, f);
 }
 
+static void samd_add_bitstream(target_s *const target)
+{
+	target_flash_s *flash = calloc(1, sizeof(*flash));
+	if (!flash) { /* calloc failed: heap exhaustion */
+		DEBUG_ERROR("calloc: failed in %s\n", __func__);
+		return;
+	}
+
+	flash->start = SAMD_SQUISHY_FPGA_BASE;
+	flash->length = SAMD_SQUISHY_FPGA_SIZE;
+	flash->prepare = samd_bitstream_prep;
+	flash->erase = samd_bitstream_erase;
+	flash->write = samd_bitstream_write;
+	flash->done = samd_bitstream_done;
+	flash->writesize = 1024U;
+
+	target_add_flash(target, flash);
+}
+
 #define SAMD_VARIANT_STR_LENGTH 60U
 
 typedef struct samd_priv {
@@ -817,6 +844,7 @@ bool samd_probe(target_s *t)
 	samd_add_flash(t, 0x00000000U, samd.flash_size);
 	bmp_spi_add_flash(
 		t, SAMD_SQUISHY_FLASH_BASE, SAMD_SQUISHY_FLASH_SIZE, samd_spi_read, samd_spi_write, samd_spi_run_cmd);
+	samd_add_bitstream(t);
 	target_add_commands(t, samd_cmd_list, "SAMD");
 
 	samd_spi_init(t, SAMD_SERCOM0_BASE);
@@ -1067,6 +1095,31 @@ static void samd_mem_read(target_s *const target, void *const dest, const target
 			src - SAMD_SQUISHY_FLASH_BASE, dest, len);
 	else
 		cortexm_mem_read(target, dest, src, len);
+}
+
+static uint8_t samd_spi_bitbang(target_s *target, const uint8_t data)
+{
+}
+
+static bool samd_bitstream_prep(target_flash_s *flash)
+{
+}
+
+// NOTE(aki): We can't "erase" the FPGA bitstream so stub it out
+static bool samd_bitstream_erase(target_flash_s *flash, target_addr_t addr, size_t len)
+{
+	(void)flash;
+	(void)addr;
+	(void)len;
+	return true;
+}
+
+static bool samd_bitstream_write(target_flash_s *flash, target_addr_t dest, const void *src, size_t len)
+{
+}
+
+static bool samd_bitstream_done(target_flash_s *flash)
+{
 }
 
 /* Uses the Device Service Unit to erase the entire flash */
