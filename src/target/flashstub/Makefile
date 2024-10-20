@@ -11,11 +11,19 @@ endif
 CFLAGS=-std=c11 -Os -mcpu=cortex-m0 -mthumb -I../../../deps/libopencm3/include -ffreestanding
 ASFLAGS=-mcpu=cortex-m3 -mthumb
 
-all:	lmi.stub stm32l4.stub efm32.stub rp.stub
+all:	lmi.stub stm32l4.stub efm32.stub rp.stub samd_sercom.stub
 
 lmi.o: CFLAGS += -mcpu=cortex-m3
 rp.o: CFLAGS += -Oz -mcpu=cortex-m0plus -nostartfiles -nodefaultlibs -nostdlib -T rp.ld
 rp.o: rp.c
+	$(Q)echo "  CC      $<"
+	$(Q)$(CC) $(CFLAGS) -o $@ $<
+
+samd_sercom_read.o samd_sercom_write.o: CFLAGS += -Oz -mcpu=cortex-m0plus -nostartfiles -nodefaultlibs -nostdlib -T rp.ld
+samd_sercom_read.o: samd_sercom_read.c
+	$(Q)echo "  CC      $<"
+	$(Q)$(CC) $(CFLAGS) -o $@ $<
+samd_sercom_write.o: samd_sercom_write.c
 	$(Q)echo "  CC      $<"
 	$(Q)$(CC) $(CFLAGS) -o $@ $<
 
