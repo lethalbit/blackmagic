@@ -148,3 +148,35 @@ rp2040_stub = custom_target(
 	output: 'rp.stub',
 	capture: true,
 )
+
+# Flash stub for the ATSAMD09
+samd_stub_elf = executable(
+	'samd_stub',
+	['samd_sercom_read.c', 'samd_sercom_write.c'],
+	c_args: [
+		'-mcpu=cortex-m0plus',
+		stub_build_args
+	],
+	link_args: [
+		'-Oz',
+		'-mcpu=cortex-m0plus',
+		stub_build_args,
+		'-T', '@0@/rp.ld'.format(meson.current_source_dir()),
+	],
+	link_depends: files('rp.ld'),
+	pie: false,
+	install: false,
+)
+
+samd_stub = custom_target(
+	'samd_stub-hex',
+	command: [
+		hexdump,
+		'-v',
+		'-e', '/2 "0x%04X, "',
+		'@INPUT@'
+	],
+	input: samd_stub_elf,
+	output: 'samd_sercom.stub',
+	capture: true,
+)
