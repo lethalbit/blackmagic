@@ -1144,11 +1144,15 @@ static void samd_pin_setup(
 static void samd_setup_sercom(target_s *const target, const target_addr32_t sercom_base)
 {
 	if (sercom_base == SAMD_SERCOM0_BASE) {
+		// Setup ~CS
 		samd_pin_setup(target, SAMD_PORT_A, 4U, SAMD_PORTx_PINCFG_DRVSTR, SAMD_PORTx_PMUX_PMUXE_FUNC_C);
+		// Setup CLK
 		samd_pin_setup(
 			target, SAMD_PORT_A, 5U, SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN, SAMD_PORTx_PMUX_PMUXE_FUNC_D);
+		// Setup COPI
 		samd_pin_setup(
 			target, SAMD_PORT_A, 6U, SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN, SAMD_PORTx_PMUX_PMUXE_FUNC_C);
+		// Setup CIPO
 		samd_pin_setup(target, SAMD_PORT_A, 7U,
 			SAMD_PORTx_PINCFG_DRVSTR | SAMD_PORTx_PINCFG_PMUXEN | SAMD_PORTx_PINCFG_INEN, SAMD_PORTx_PMUX_PMUXE_FUNC_D);
 
