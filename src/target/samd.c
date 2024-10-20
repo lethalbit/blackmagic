@@ -1159,8 +1159,26 @@ static void samd_setup_sercom(target_s *const target, const target_addr32_t serc
 	}
 }
 
+static void samd_setup_clocking(target_s *const target, const target_addr32_t sercom_base)
+{
+	// Set SERCOM clock enable
+	target_mem32_write32(target, SAMD_PM_APBCMASK,
+		target_mem32_read32(target, SAMD_PM_APBCMASK) |
+			(sercom_base == SAMD_SERCOM0_BASE ? SAMD_PM_APBCMASK_SERCOM0 : SAMD_PM_APBCMASK_SERCOM1));
+
+	// Enable the first input clock thing
+	target_mem32_write16(target, SAMD_GCLK_CLKCTRL,
+		(sercom_base == SAMD_SERCOM0_BASE ? SAMD_GCLK_CLKCTRL_ID_GCLK_SERCOM0_CORE :
+											SAMD_GCLK_CLKCTRL_ID_GCLK_SERCOM1_CORE) |
+			SAMD_GCLK_CLKCTRL_GEN_GCLK0 | SAMD_GCLK_CLKCTRL_CLKEN);
+	target_mem32_write16(target, SAMD_GCLK_CLKCTRL,
+		SAMD_GCLK_CLKCTRL_ID_GCLK_SERCOMx_SLOW | SAMD_GCLK_CLKCTRL_GEN_GCLK0 | SAMD_GCLK_CLKCTRL_CLKEN);
+}
+
 static void samd_spi_init(target_s *const target, const target_addr32_t sercom_base)
 {
+	samd_setup_clocking(target, sercom_base);
+
 	// Check if the SERCOM is enabled, disable if so
 	uint32_t ctrla = target_mem32_read32(target, SAMD_SERCOMx_CTRLA(sercom_base));
 	if (ctrla & SAMD_SERCOMx_CTRLA_ENABLE) {
