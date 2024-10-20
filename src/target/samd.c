@@ -53,7 +53,7 @@
 #define SAMD_SQUISHY_FLASH_BASE 0x10000000U
 #define SAMD_SQUISHY_FLASH_SIZE 0x04000000U // 64Mib
 
-
+// SAMD SERCOMs
 #define SAMD_SERCOM0_BASE 0x42000800U
 #define SAMD_SERCOM1_BASE 0x42000C00U
 
@@ -83,9 +83,9 @@
 #define SAMD_SERCOMx_CTRLA_DOPO_3          (0x3U << 16U) // PAD[0] = DO, PAD[3] = SCK, PAD[1] = Peripheral_SS
 #define SAMD_SERCOMx_CTRLA_DIPO_MASK       (0x3U << 20U)
 #define SAMD_SERCOMx_CTRLA_DIPO_0          (0x0U << 20U) // PAD[0] = DI
-#define SAMD_SERCOMx_CTRLA_DIPO_1          (0x2U << 20U) // PAD[1] = DI
-#define SAMD_SERCOMx_CTRLA_DIPO_2          (0x3U << 20U) // PAD[2] = DI
-#define SAMD_SERCOMx_CTRLA_DIPO_3          (0x4U << 20U) // PAD[3] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_1          (0x1U << 20U) // PAD[1] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_2          (0x2U << 20U) // PAD[2] = DI
+#define SAMD_SERCOMx_CTRLA_DIPO_3          (0x3U << 20U) // PAD[3] = DI
 #define SAMD_SERCOMx_CTRLA_FORM_MASK       (0xfU << 24U)
 #define SAMD_SERCOMx_CTRLA_FORM_SPI        (0x0U << 24U) // SPI Frame
 #define SAMD_SERCOMx_CTRLA_FORM_SPI_ADDR   (0x2U << 24U) // SPI Frame w/ Addr
@@ -135,6 +135,8 @@
 #define SAMD_SERCOMx_DATA_DATA_MASK (0x10U << 0U)
 
 #define SAMD_SERCOMx_DBGCTRL_DBSTOP (1U << 0U) // 1 Freeze BAUD when DBG, 0 Don't
+
+// SAMD Ports
 
 #define SAMD_PORTx_BASE           0x41004400U
 #define SAMD_PORT_A               0x00U
@@ -232,6 +234,8 @@
 #define SAMD_PORTx_PINCFG_INEN   (1U << 1U)
 #define SAMD_PORTx_PINCFG_PULLEN (1U << 2U)
 #define SAMD_PORTx_PINCFG_DRVSTR (1U << 6U)
+
+// SAMD Pins
 
 #define SAMD_PIN(num) (1U << num)
 #define SAMD_PIN0     SAMD_PIN(0U)
