@@ -570,6 +570,13 @@ const command_s samd_cmd_list[] = {
 
 #define ID_SAMD 0xcd0U
 
+static const uint16_t samd_spi_read_stub[] = {
+#include "flashstub/samd_sercom_read.stub"
+};
+static const uint16_t samd_spi_write_stub[] = {
+#include "flashstub/samd_sercom_write.stub"
+};
+
 /* Family parts */
 typedef struct samd_part {
 	uint8_t devsel;
@@ -951,6 +958,14 @@ typedef struct samd_priv {
 	char samd_variant_string[SAMD_VARIANT_STR_LENGTH];
 } samd_priv_s;
 
+bool spi_flash_prep(target_flash_s *flash)
+{
+	if (flash->operation == FLASH_OPERATION_ERASE) {
+		target_mem32_write(flash->t, SAMD_SRAM_BASE, samd_spi_write_stub, sizeof(samd_spi_write_stub));
+		samd_spi_init(flash->t, SAMD_SERCOM0_BASE);
+	}
+}
+
 bool samd_probe(target_s *t)
 {
 	/* Check the part number is the SAMD part number */
@@ -1019,8 +1034,10 @@ bool samd_probe(target_s *t)
 
 	target_add_ram32(t, SAMD_SRAM_BASE, samd.ram_size);
 	samd_add_flash(t, SAMD_FLASH_BANK_BASE, samd.flash_size);
-	bmp_spi_add_flash(
+	spi_flash_s *spi_flash = bmp_spi_add_flash(
 		t, SAMD_SQUISHY_FLASH_BASE, SAMD_SQUISHY_FLASH_SIZE, samd_spi_read, samd_spi_write, samd_spi_run_cmd);
+
+	spi_flash->flash.prepare = spi_flash_prep;
 
 	target_add_commands(t, samd_cmd_list, "SAMD");
 
@@ -1232,61 +1249,38 @@ static void samd_spi_init(target_s *const target, const target_addr32_t sercom_b
 	}
 }
 
-static uint8_t samd_spi_xfer(target_s *const target, const target_addr32_t sercom_base, const uint8_t data)
-{
-	target_mem32_write8(target, SAMD_SERCOMx_DATA(sercom_base), data);
-	return target_mem32_read8(target, SAMD_SERCOMx_DATA(sercom_base));
-}
-
-static void samd_spi_setup_xfer(target_s *const target, const uint16_t command, const target_addr32_t address)
-{
-	target_mem32_write32(target, SAMD_PORTx_OUTCLR(SAMD_PORT_A), SAMD_PIN4);
-
-	/* Set up the instruction */
-	const uint8_t opcode = command & SPI_FLASH_OPCODE_MASK;
-	samd_spi_xfer(target, SAMD_SERCOM0_BASE, opcode);
-
-	if ((command & SPI_FLASH_OPCODE_MODE_MASK) == SPI_FLASH_OPCODE_3B_ADDR) {
-		/* For each byte sent here, we have to manually clean up from the controller with a read */
-		samd_spi_xfer(target, SAMD_SERCOM0_BASE, (address >> 16U) & 0xffU);
-		samd_spi_xfer(target, SAMD_SERCOM0_BASE, (address >> 8U) & 0xffU);
-		samd_spi_xfer(target, SAMD_SERCOM0_BASE, address & 0xffU);
-	}
-
-	const size_t inter_length = (command & SPI_FLASH_DUMMY_MASK) >> SPI_FLASH_DUMMY_SHIFT;
-	for (size_t i = 0; i < inter_length; ++i)
-		/* For each byte sent here, we have to manually clean up from the controller with a read */
-		samd_spi_xfer(target, SAMD_SERCOM0_BASE, 0);
-}
-
 static void samd_spi_read(target_s *const target, const uint16_t command, const target_addr_t address,
 	void *const buffer, const size_t length)
 {
-	samd_spi_setup_xfer(target, command, address);
+	const target_addr32_t on_dev_buffer = SAMD_SRAM_BASE + sizeof(samd_spi_read_stub);
+	target_mem32_write(target, SAMD_SRAM_BASE, samd_spi_read_stub, sizeof(samd_spi_read_stub));
 
 	uint8_t *const data = (uint8_t *const)buffer;
-	for (size_t i = 0; i < length; ++i)
-		data[i] = samd_spi_xfer(target, SAMD_SERCOM0_BASE, 0);
 
-	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+	for (size_t offset = 0; offset < length; offset += 1024) {
+		size_t ammount = MIN(length - offset, 1024);
+
+		cortexm_run_stub(target, SAMD_SRAM_BASE, command, address + offset, on_dev_buffer, ammount);
+		target_mem32_read(target, data + offset, on_dev_buffer, ammount);
+	}
 }
 
 static void samd_spi_write(target_s *const target, const uint16_t command, const target_addr_t address,
 	const void *const buffer, const size_t length)
 {
-	samd_spi_setup_xfer(target, command, address);
+	const target_addr32_t on_dev_buffer = ((SAMD_SRAM_BASE + sizeof(samd_spi_write_stub)) + 3U) & ~3U;
+	target_flash_s *flash = target_flash_for_addr(target, SAMD_SQUISHY_FLASH_BASE);
+	if (flash->operation == FLASH_OPERATION_WRITE)
+		target_mem32_write(target, SAMD_SRAM_BASE, samd_spi_write_stub, sizeof(samd_spi_write_stub));
 
-	const uint8_t *const data = (const uint8_t *const)buffer;
-	for (size_t i = 0; i < length; ++i)
-		samd_spi_xfer(target, SAMD_SERCOM0_BASE, data[i]);
+	target_mem32_write(target, on_dev_buffer, buffer, length);
 
-	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+	cortexm_run_stub(target, SAMD_SRAM_BASE, command, address, on_dev_buffer, length);
 }
 
 static void samd_spi_run_cmd(target_s *const target, const uint16_t command, const target_addr_t address)
 {
-	samd_spi_setup_xfer(target, command, address);
-	target_mem32_write32(target, SAMD_PORTx_OUTSET(SAMD_PORT_A), SAMD_PIN4);
+	samd_spi_write(target, command, address, NULL, 0);
 }
 
 static void samd_mem_read(target_s *const target, void *const dest, const target_addr64_t src, const size_t len)
