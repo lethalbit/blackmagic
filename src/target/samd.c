@@ -820,14 +820,14 @@ bool samd_probe(target_s *t)
 		t->attach = samd_protected_attach;
 	}
 
+	samd_spi_init(t, SAMD_SERCOM0_BASE);
+
 	target_add_ram32(t, SAMD_SRAM_BASE, samd.ram_size);
 	samd_add_flash(t, SAMD_FLASH_BANK_BASE, samd.flash_size);
 	bmp_spi_add_flash(
 		t, SAMD_SQUISHY_FLASH_BASE, SAMD_SQUISHY_FLASH_SIZE, samd_spi_read, samd_spi_write, samd_spi_run_cmd);
 
 	target_add_commands(t, samd_cmd_list, "SAMD");
-
-	samd_spi_init(t, SAMD_SERCOM0_BASE);
 
 	/* If we're not in reset here */
 	if (!platform_nrst_get_val()) {
