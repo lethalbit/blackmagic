@@ -1196,22 +1196,26 @@ static void samd_spi_init(target_s *const target, const target_addr32_t sercom_b
 
 	// Set us as an SPI controller
 	if (sercom_base == SAMD_SERCOM0_BASE) {
-		ctrla = SAMD_SERCOMx_CTRLA_MODE_CONTROLLER |
+		ctrla = SAMD_SERCOMx_CTRLA_MODE_CONTROLLER | SAMD_SERCOMx_CTRLA_IBON |
 			// Set CPOL to 0 and CPHA to 1, setting SCK idle low, sample on trailing edge
 			SAMD_SERCOMx_CTRLA_CPHA |
 			// Pure data frame format (ignores the addr)
 			SAMD_SERCOMx_CTRLA_FORM_SPI |
 			// Set up the SERCOM Pinout: PAD[0] = COPI; PAD[1] = CLK; PAD[2] = CS; PAD[3] = CIPO
-			SAMD_SERCOMx_CTRLA_DOPO_0 | SAMD_SERCOMx_CTRLA_DIPO_1 |
-			// Set to LSB-first
-			SAMD_SERCOMx_CTRLA_DORD;
+			SAMD_SERCOMx_CTRLA_DOPO_0 | SAMD_SERCOMx_CTRLA_DIPO_3;
 
 		// Wiggle the bits
 		target_mem32_write32(target, SAMD_SERCOMx_CTRLA(sercom_base), ctrla);
 
+		while (target_mem32_read32(target, SAMD_SERCOMx_SYNCBUSY(sercom_base)) & SAMD_SERCOMx_SYNCBUSY_CTRLB)
+			continue;
+
 		// Set the character size to 8-bits, enable receve mode
 		target_mem32_write32(
 			target, SAMD_SERCOMx_CTRLB(sercom_base), SAMD_SERCOMx_CTRLB_CHSIZE_8BIT | SAMD_SERCOMx_CTRLB_RXEN);
+
+		while (target_mem32_read32(target, SAMD_SERCOMx_SYNCBUSY(sercom_base)) & SAMD_SERCOMx_SYNCBUSY_CTRLB)
+			continue;
 
 		// Enable the BAUD generation even though we've brainslugged the core
 		target_mem32_write8(target, SAMD_SERCOMx_DBGCTRL(sercom_base), 0U);
