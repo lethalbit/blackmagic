@@ -44,6 +44,12 @@
 #include "cortexm.h"
 #include "spi.h"
 
+#define SAMD_FLASH_BANK_BASE 0x00000000U
+#define SAMD_FLASH_BANK_SIZE 0x00004000U
+
+#define SAMD_SRAM_BASE 0x20000000U
+#define SAMD_SRAM_SIZE 0x00001000U
+
 #define SAMD_SQUISHY_FLASH_BASE 0x10000000U
 #define SAMD_SQUISHY_FLASH_SIZE 0x04000000U // 64Mib
 
@@ -814,8 +820,8 @@ bool samd_probe(target_s *t)
 		t->attach = samd_protected_attach;
 	}
 
-	target_add_ram32(t, 0x20000000U, samd.ram_size);
-	samd_add_flash(t, 0x00000000U, samd.flash_size);
+	target_add_ram32(t, SAMD_SRAM_BASE, samd.ram_size);
+	samd_add_flash(t, SAMD_FLASH_BANK_BASE, samd.flash_size);
 	bmp_spi_add_flash(
 		t, SAMD_SQUISHY_FLASH_BASE, SAMD_SQUISHY_FLASH_SIZE, samd_spi_read, samd_spi_write, samd_spi_run_cmd);
 
