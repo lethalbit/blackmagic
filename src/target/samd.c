@@ -964,6 +964,8 @@ bool spi_flash_prep(target_flash_s *flash)
 		target_mem32_write(flash->t, SAMD_SRAM_BASE, samd_spi_write_stub, sizeof(samd_spi_write_stub));
 		samd_spi_init(flash->t, SAMD_SERCOM0_BASE);
 	}
+
+	return true;
 }
 
 bool samd_probe(target_s *t)
